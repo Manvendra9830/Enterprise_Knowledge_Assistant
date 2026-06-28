@@ -21,6 +21,7 @@ from app.conversation import ConversationMemory
 from app.guardrails import ContextGuardrails
 from app.llm_engine import LLMEngine
 from app.models import AskRequest, AskResponse, SourceCitation
+from app.profiling import log_latency_breakdown, timed_step
 from app.retriever import HybridRetriever
 
 logger = logging.getLogger(__name__)
@@ -48,20 +49,25 @@ class RAGPipeline:
         original_query = request.question.strip()
         session_id = request.session_id
         logger.info(f"Processing query: '{original_query}' (session: {session_id})")
+        timings: dict[str, float] = {}
 
         # 1. Get conversation context
-        context = self.memory.get_context_string(session_id) if session_id else None
+        with timed_step(timings, "memory"):
+            context = self.memory.get_context_string(session_id) if session_id else None
 
         # 2. Query Rewriting
         search_query = original_query
-        if context:
-            search_query = self.llm_engine.rewrite_query(original_query, context)
+        with timed_step(timings, "query_rewrite"):
+            if context:
+                search_query = self.llm_engine.rewrite_query(original_query, context)
 
         # 3. Hybrid Retrieval & Re-ranking
-        ranked_chunks = self.retriever.retrieve(search_query)
+        with timed_step(timings, "retrieval"):
+            ranked_chunks = self.retriever.retrieve(search_query)
 
         # 4. Context Validation / Guardrails
-        validation = self.guardrails.validate_context(ranked_chunks, original_query)
+        with timed_step(timings, "guardrails"):
+            validation = self.guardrails.validate_context(ranked_chunks, original_query)
 
         if not validation.proceed:
             # Blocked by guardrails -> return standard refusal, NO SOURCES
@@ -70,7 +76,9 @@ class RAGPipeline:
             
             # Still record turn in memory so it remembers the refusal
             if session_id:
-                self.memory.add_turn(session_id, original_query, response_text)
+                with timed_step(timings, "memory_update"):
+                    self.memory.add_turn(session_id, original_query, response_text)
+            log_latency_breakdown("ask", timings)
                 
             return AskResponse(
                 answer=response_text,
@@ -84,13 +92,15 @@ class RAGPipeline:
         # 5. LLM Answer Generation
         # Only use top chunks that passed the guardrail
         top_chunks = ranked_chunks[:self.retriever.top_n]
-        answer, answer_source = self.llm_engine.generate_answer(search_query, top_chunks, context)
+        with timed_step(timings, "llm_generation"):
+            answer, answer_source = self.llm_engine.generate_answer(search_query, top_chunks, context)
 
         # 6. Confidence Scoring
-        best_retrieval = max((c.retrieval_score for c in top_chunks), default=0.0)
-        best_rerank = max((c.reranker_score for c in top_chunks), default=0.0)
-        confidence = self.confidence_engine.calculate_confidence(best_retrieval, best_rerank)
-        confidence_level = self.confidence_engine.get_confidence_level(confidence)
+        with timed_step(timings, "confidence"):
+            best_retrieval = max((c.retrieval_score for c in top_chunks), default=0.0)
+            best_rerank = max((c.reranker_score for c in top_chunks), default=0.0)
+            confidence = self.confidence_engine.calculate_confidence(best_retrieval, best_rerank)
+            confidence_level = self.confidence_engine.get_confidence_level(confidence)
 
         # 7. Response Formatting (Source Citations with Excerpts)
         sources: list[SourceCitation] = []
@@ -98,32 +108,35 @@ class RAGPipeline:
         
         # If the LLM failed and we are in retrieval mode, we still show the sources.
         # But if the guardrails failed, we don't.
-        for c in top_chunks:
-            doc_key = f"{c.chunk.document_name}::{c.chunk.page_number}"
-            if doc_key not in seen_docs:
-                seen_docs.add(doc_key)
-                
-                text = c.chunk.text.strip()
-                excerpt = text[:150]
-                if len(text) > 150:
-                    last_space = excerpt.rfind(" ")
-                    if last_space > 100:
-                        excerpt = excerpt[:last_space]
-                    excerpt += "..."
-                
-                sources.append(
-                    SourceCitation(
-                        document=c.chunk.document_name,
-                        page=c.chunk.page_number,
-                        excerpt=excerpt,
+        with timed_step(timings, "citation_generation"):
+            for c in top_chunks:
+                doc_key = f"{c.chunk.document_name}::{c.chunk.page_number}"
+                if doc_key not in seen_docs:
+                    seen_docs.add(doc_key)
+                    
+                    text = c.chunk.text.strip()
+                    excerpt = text[:150]
+                    if len(text) > 150:
+                        last_space = excerpt.rfind(" ")
+                        if last_space > 100:
+                            excerpt = excerpt[:last_space]
+                        excerpt += "..."
+                    
+                    sources.append(
+                        SourceCitation(
+                            document=c.chunk.document_name,
+                            page=c.chunk.page_number,
+                            excerpt=excerpt,
+                        )
                     )
-                )
 
         # Update Conversation Memory
         if session_id:
-            self.memory.add_turn(session_id, original_query, answer)
+            with timed_step(timings, "memory_update"):
+                self.memory.add_turn(session_id, original_query, answer)
 
         logger.info(f"Query processed successfully. Confidence: {confidence:.3f} ({confidence_level.value})")
+        log_latency_breakdown("ask", timings)
         return AskResponse(
             answer=answer,
             sources=sources,

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Path
@@ -24,6 +25,7 @@ from app.vector_store import VectorStore
 from app.bm25_index import BM25Index
 from app.document_processor import DocumentProcessor
 from app.embedding_engine import EmbeddingEngine
+from app.profiling import log_latency_breakdown, timed_step
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -42,61 +44,50 @@ embedding_engine: Optional[EmbeddingEngine] = None
 @router.get("/health", response_model=HealthResponse, tags=["System"])
 async def health_check():
     """System health check and status of all models."""
+    timings: dict[str, float] = {}
     docs = 0
     chunks = 0
     
     # Vector store check
     chromadb_status = "healthy"
-    try:
-        if vector_store:
-            doc_list = vector_store.get_all_documents()
-            docs = len(doc_list)
-            chunks = vector_store.count
-        else:
-            chromadb_status = "unavailable"
-    except Exception as e:
-        logger.error(f"Health check failed to query vector store: {e}")
-        chromadb_status = "error"
+    with timed_step(timings, "chromadb"):
+        try:
+            if vector_store:
+                doc_list = vector_store.get_all_documents()
+                docs = len(doc_list)
+                chunks = vector_store.count
+            else:
+                chromadb_status = "unavailable"
+        except Exception as e:
+            logger.error(f"Health check failed to query vector store: {e}", exc_info=True)
+            chromadb_status = "error"
 
     # Component checks
     embedding_status = "loaded" if embedding_engine else "unavailable"
     reranker_status = "loaded" if pipeline and pipeline.retriever else "unavailable"
     
-    # -------------------------------------------------------------
-    # Gemini Check (Actual Generation)
-    # -------------------------------------------------------------
+    # Gemini health must not spend quota or perform generation.
     gemini_status = "unavailable"
-    if pipeline and pipeline.llm_engine and pipeline.llm_engine.gemini_client:
-        try:
-            from google.genai import types
-            response = pipeline.llm_engine.gemini_client.models.generate_content(
-                model=settings.gemini_model,
-                contents="health check",
-                config=types.GenerateContentConfig(max_output_tokens=5)
-            )
-            if response.text:
-                gemini_status = "available"
-        except Exception as e:
-            logger.error(f"Gemini health generation failed: {type(e).__name__} - {e}")
+    if pipeline and pipeline.llm_engine:
+        gemini_status = pipeline.llm_engine.gemini_status()
 
-    # -------------------------------------------------------------
-    # Ollama Check (Actual Generation)
-    # -------------------------------------------------------------
+    # Ollama health uses the lightweight tags endpoint; no generation call.
     ollama_status = "unavailable"
-    if pipeline and pipeline.llm_engine and pipeline.llm_engine.ollama_client:
+    if pipeline and pipeline.llm_engine:
         try:
-            response = pipeline.llm_engine.ollama_client.chat.completions.create(
-                model=settings.ollama_model,
-                messages=[{"role": "user", "content": "health check"}],
-                max_tokens=5,
-                timeout=10.0
-            )
-            if response.choices and response.choices[0].message.content:
-                ollama_status = "available"
+            with timed_step(timings, "ollama"):
+                response = httpx.get("http://localhost:11434/api/tags", timeout=1.0)
+            if response.status_code == 200:
+                models = response.json().get("models", [])
+                model_names = {m.get("name") or m.get("model") for m in models}
+                ollama_status = "available" if settings.ollama_model in model_names else "model_missing"
+            else:
+                ollama_status = f"error_{response.status_code}"
         except Exception as e:
-            logger.error(f"Ollama health generation failed: {type(e).__name__} - {e}")
+            logger.warning(f"Ollama health check failed: {type(e).__name__} - {e}")
 
-    fallback_mode = (gemini_status != "available")
+    fallback_mode = gemini_status not in {"configured", "available"}
+    log_latency_breakdown("health", timings)
 
     return HealthResponse(
         documents_loaded=docs,
@@ -121,7 +112,9 @@ async def ask_question(request: AskRequest):
         raise HTTPException(status_code=503, detail="RAG Pipeline not initialized")
         
     try:
+        start = time.perf_counter()
         response = pipeline.process_query(request)
+        logger.info("request_latency endpoint=ask total=%.1fms", (time.perf_counter() - start) * 1000)
         return response
     except Exception as e:
         logger.exception("Error processing query")
@@ -158,29 +151,37 @@ async def upload_document(file: UploadFile = File(...)):
         raise HTTPException(status_code=503, detail="Ingestion components not initialized")
         
     try:
-        content = await file.read()
+        timings: dict[str, float] = {}
+        with timed_step(timings, "read_upload"):
+            content = await file.read()
         logger.info(f"Received upload: {file.filename}")
         
         # Process document
-        chunks = doc_processor.process_file(file.filename, content)
+        with timed_step(timings, "chunking"):
+            chunks = doc_processor.process_file(file.filename, content)
         if not chunks:
             raise HTTPException(status_code=400, detail="Could not extract text from document")
             
         # Generate embeddings
         texts = [c.text for c in chunks]
-        embeddings = embedding_engine.embed_texts(texts)
+        with timed_step(timings, "embedding"):
+            embeddings = embedding_engine.embed_texts(texts)
         
         # Add to Vector Store
-        vector_store.add_chunks(chunks, embeddings)
+        with timed_step(timings, "chroma_insertion"):
+            vector_store.add_chunks(chunks, embeddings)
         
         # Add to BM25 Index
-        bm25_index.add_chunks(chunks)
+        with timed_step(timings, "bm25_index_update"):
+            bm25_index.add_chunks(chunks)
         
         # Save physical file
-        doc_path = os.path.join(settings.documents_dir, file.filename)
-        os.makedirs(settings.documents_dir, exist_ok=True)
-        with open(doc_path, "wb") as f:
-            f.write(content)
+        with timed_step(timings, "file_save"):
+            doc_path = os.path.join(settings.documents_dir, file.filename)
+            os.makedirs(settings.documents_dir, exist_ok=True)
+            with open(doc_path, "wb") as f:
+                f.write(content)
+        log_latency_breakdown("upload", timings)
         
         return {
             "status": "success", 

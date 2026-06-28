@@ -9,6 +9,7 @@ The index is serialized to disk for persistence across restarts.
 from __future__ import annotations
 
 import logging
+import heapq
 import os
 import pickle
 import re
@@ -62,8 +63,8 @@ class BM25Index:
         tokenized_query = self._tokenize(query)
         scores = self._bm25.get_scores(tokenized_query)
 
-        # Get top-k indices sorted by score descending
-        top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
+        # Get top-k indices without sorting the full corpus.
+        top_indices = heapq.nlargest(top_k, range(len(scores)), key=lambda i: scores[i])
 
         results = []
         for idx in top_indices:

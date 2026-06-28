@@ -86,9 +86,10 @@ class VectorStore:
         if filter_document:
             where_filter = {"document_name": filter_document}
 
+        count = self.collection.count()
         results = self.collection.query(
             query_embeddings=[query_embedding],
-            n_results=min(top_k, self.collection.count()) if self.collection.count() > 0 else top_k,
+            n_results=min(top_k, count) if count > 0 else top_k,
             where=where_filter,
             include=["documents", "metadatas", "distances"],
         )
