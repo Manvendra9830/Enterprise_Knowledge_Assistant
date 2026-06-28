@@ -1,0 +1,33 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-dotenv==1.0.1
+pydantic==2.9.2
+pydantic-settings==2.5.2
+
+# LLM
+google-genai==1.14.0
+
+# Embeddings & Re-ranking
+sentence-transformers==3.0.1
+torch==2.4.1
+
+# Vector Store
+chromadb==0.5.7
+
+# BM25
+rank-bm25==0.2.2
+
+# Document Processing
+pdfminer.six==20231228
+python-docx==1.1.2
+
+# Utilities
+python-multipart==0.0.9
+aiofiles==24.1.0
+numpy==1.26.4
+
+# Testing
+pytest==8.3.3
+pytest-asyncio==0.24.0
+httpx>=0.28.1
+openai==1.50.0

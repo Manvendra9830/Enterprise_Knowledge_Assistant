@@ -1,0 +1,79 @@
+[
+  {
+    "question": "What is the employee leave policy?",
+    "expected_answer_contains": ["24", "paid leaves", "annually"],
+    "expected_source_documents": ["HR_Policy.md"],
+    "expected_source_page": 1,
+    "category": "hr"
+  },
+  {
+    "question": "How many public holidays do we get?",
+    "expected_answer_contains": ["12", "public holidays"],
+    "expected_source_documents": ["HR_Policy.md"],
+    "expected_source_page": 1,
+    "category": "hr"
+  },
+  {
+    "question": "What happens if I try to add more users than my plan allows?",
+    "expected_answer_contains": ["upgrade", "plan"],
+    "expected_source_documents": ["Customer_FAQ.md"],
+    "expected_source_page": 1,
+    "category": "faq"
+  },
+  {
+    "question": "What is the refund policy?",
+    "expected_answer_contains": ["30-day", "money-back"],
+    "expected_source_documents": ["Customer_FAQ.md"],
+    "expected_source_page": 1,
+    "category": "faq"
+  },
+  {
+    "question": "What are the rules for storing payment transaction data?",
+    "expected_answer_contains": ["India", "exclusively"],
+    "expected_source_documents": ["Compliance_Guidelines.md"],
+    "expected_source_page": 1,
+    "category": "compliance"
+  },
+  {
+    "question": "How long do we keep employee records?",
+    "expected_answer_contains": ["employment", "7 years"],
+    "expected_source_documents": ["Compliance_Guidelines.md"],
+    "expected_source_page": 1,
+    "category": "compliance"
+  },
+  {
+    "question": "What is the primary backend language we use?",
+    "expected_answer_contains": ["Python", "3.11"],
+    "expected_source_documents": ["Technical_Guide.md"],
+    "expected_source_page": 1,
+    "category": "tech"
+  },
+  {
+    "question": "What is the SLA for a P1 incident?",
+    "expected_answer_contains": ["15 minutes"],
+    "expected_source_documents": ["Technical_Guide.md"],
+    "expected_source_page": 1,
+    "category": "tech"
+  },
+  {
+    "question": "Does NovaTech have a CRM module?",
+    "expected_answer_contains": ["Yes", "360-degree"],
+    "expected_source_documents": ["Product_Documentation.md"],
+    "expected_source_page": 1,
+    "category": "product"
+  },
+  {
+    "question": "What is the capital of Mars?",
+    "expected_answer_contains": [],
+    "expected_source_documents": [],
+    "expected_source_page": null,
+    "category": "out_of_scope"
+  },
+  {
+    "question": "Who won the World Cup in 2022?",
+    "expected_answer_contains": [],
+    "expected_source_documents": [],
+    "expected_source_page": null,
+    "category": "out_of_scope"
+  }
+]

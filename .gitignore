@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual Environment
+venv/
+.env
+
+# VS Code
+.vscode/
+
+# Logs
+*.log
+
+# Build
+build/
+dist/
+
+# Python cache
+.pytest_cache/
+.mypy_cache/
+
+# ChromaDB generated files
+chroma_db/
+
+# BM25 cache
+bm25_index.pkl
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+.env.local
+.env.production
+
+# Temporary files
+*.tmp
+*.bak
